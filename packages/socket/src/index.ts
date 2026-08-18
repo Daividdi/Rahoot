@@ -341,17 +341,42 @@ io.on("connection", (socket) => {
   socket.on("manager:getDayParticipation", (args: any, callback: any) => {
     if (typeof callback !== "function") return
     try {
-      const date = typeof args?.date === "string" ? args.date : null
-      if (!date) { callback({ ok: false, error: "missing date" }); return }
+      const date  = typeof args?.date  === "string" ? args.date  : null
+      const month = typeof args?.month === "string" ? args.month : null
+      if (!date && !month) { callback({ ok: false, error: "missing date or month" }); return }
+
+      // `month_iso` is written by this server, whose container runs in
+      // America/Sao_Paulo, so the month needs no conversion. The day filter
+      // keeps using date(...,'localtime') exactly as before.
+      const where = date ? "date(s.ended_at, 'localtime') = ?" : "s.month_iso = ?"
+      const arg = (date || month) as string
+
       const rows = db().prepare(`
         SELECT p.real_name, s.quiz_id, s.quiz_title,
           sp.points, sp.correct, sp.incorrect, sp.unanswered
         FROM session_players sp
         JOIN sessions s ON s.id = sp.session_id AND s.mode = 'classic'
         JOIN players p ON p.id = sp.player_id
-        WHERE date(s.ended_at, 'localtime') = ?
-      `).all(date)
-      callback({ ok: true, rows })
+        WHERE ${where}
+      `).all(arg)
+
+      const sessions = db().prepare(
+        `SELECT COUNT(*) AS n FROM sessions s WHERE s.mode = 'classic' AND ${where}`
+      ).get(arg) as any
+
+      // Everyone who has ever signed in, so the screen can also show who did
+      // NOT take part. Without it the list silently hides exactly the people a
+      // manager is looking for.
+      const roster = (db().prepare(
+        "SELECT real_name FROM ldap_players ORDER BY real_name"
+      ).all() as any[]).map(x => x.real_name)
+
+      // Months that actually have sessions, for the picker.
+      const months = (db().prepare(
+        "SELECT DISTINCT month_iso AS m FROM sessions WHERE mode = 'classic' ORDER BY m DESC"
+      ).all() as any[]).map(x => x.m)
+
+      callback({ ok: true, rows, sessions: sessions?.n ?? 0, roster, months })
     } catch (err: any) {
       callback({ ok: false, error: String(err) })
     }
@@ -834,6 +859,18 @@ io.on("connection", (socket) => {
         try {
           db().prepare("INSERT OR IGNORE INTO ldap_players (real_name) VALUES (?)").run(result.fullName)
         } catch {}
+        try {
+          // Record account -> display name. ON CONFLICT touches last_seen_at
+          // only, so the first sighting of each name is preserved: that is what
+          // lets a consumer order the names an account has been known by, and
+          // therefore follow a person across an AD rename.
+          const now = new Date().toISOString()
+          db().prepare(
+            `INSERT INTO ldap_identities (account, display_name, first_seen_at, last_seen_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(account, display_name) DO UPDATE SET last_seen_at = excluded.last_seen_at`
+          ).run(result.account, result.fullName, now, now)
+        } catch (e) { console.error("ldap_identities:", e) }
       }
       callback(result)
     } catch (err) {

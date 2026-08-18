@@ -180,7 +180,10 @@ function abbreviateForUsername(name: string, max = 20): string {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export type LdapAuthResult =
-  | { ok: true;  fullName: string }
+  // `account` is the sAMAccountName the user actually authenticated with. It is
+  // the only stable identifier here: `fullName` is an abbreviation of the AD
+  // displayName and changes whenever the AD record is corrected.
+  | { ok: true;  fullName: string; account: string }
   | { ok: false; error: string }
 
 export async function ldapAuthenticate(username: string, password: string): Promise<LdapAuthResult> {
@@ -219,7 +222,11 @@ export async function ldapAuthenticate(username: string, password: string): Prom
     }
 
     conn.destroy()
-    return { ok: true, fullName: abbreviateForUsername(displayName || username) }
+    return {
+      ok: true,
+      fullName: abbreviateForUsername(displayName || username),
+      account: username.toLowerCase(),
+    }
   } catch (err: any) {
     conn?.destroy()
     const msg = err?.message || ''

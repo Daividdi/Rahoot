@@ -294,6 +294,30 @@ function ensureAvatarKindColumns(): void {
 
 function ensureLdapPlayersTable(): void {
   _db!.exec("CREATE TABLE IF NOT EXISTS ldap_players (real_name TEXT PRIMARY KEY)")
+
+  // Identity that survives a rename.
+  //
+  // `ldap_players` records only the DISPLAY NAME, and the display name is
+  // derived from AD and changes whenever HR corrects someone's record. When it
+  // changes, this app creates a brand new player row and the old history is
+  // orphaned - there is nothing tying the two together.
+  //
+  // The account (sAMAccountName) never changes, so it is the real identity.
+  // The primary key is (account, display_name) rather than account alone: a
+  // rename ADDS a row instead of overwriting one, which is exactly what lets a
+  // consumer see that two differently-named player rows are the same person.
+  //
+  // Read by ShiftSync (escalas) to attribute the ranking. Before this table
+  // existed it had to guess from the name alone, and it merged two different
+  // employees whose names abbreviated to the same string.
+  _db!.exec(`CREATE TABLE IF NOT EXISTS ldap_identities (
+    account       TEXT NOT NULL,
+    display_name  TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL,
+    PRIMARY KEY (account, display_name)
+  )`)
+  _db!.exec("CREATE INDEX IF NOT EXISTS idx_ldap_identities_name ON ldap_identities(display_name)")
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────

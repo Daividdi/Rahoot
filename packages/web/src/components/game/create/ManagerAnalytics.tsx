@@ -785,6 +785,14 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
   const rc = ["bg-amber-400", "bg-gray-400", "bg-amber-700", "bg-gray-300", "bg-gray-300"]
 
   const [participationDate, setParticipationDate] = useState<string>("")
+  // Day was the only granularity. A manager asking "who is missing" thinks in
+  // months, not in one specific Tuesday.
+  const [participationMode, setParticipationMode] = useState<"day" | "month">("day")
+  const [participationMonth, setParticipationMonth] = useState<string>("")
+  // Off by default: with it on the list stops being "who played" and becomes
+  // "everyone", which is a different question and a much longer list.
+  const [participationShowAll, setParticipationShowAll] = useState(false)
+  const [participationMeta, setParticipationMeta] = useState<{ sessions: number; roster: string[]; months: string[] }>({ sessions: 0, roster: [], months: [] })
   const [participationSort, setParticipationSort] = useState<"count" | "pts" | "name">("count")
   const [participationRegion, setParticipationRegion] = useState<"all" | "BR" | "MY" | "CN">("all")
   useEffect(() => { if (activeView === "participation") setParticipationRegion(rFilter as "all" | "BR" | "MY" | "CN") }, [rFilter, activeView])
@@ -792,15 +800,20 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
   // Real per-session rows for the picked day, straight from the database —
   // the old version only saw each quiz's LAST session, hiding earlier games.
   const [dayRows, setDayRows] = useState<any[] | null>(null)
+  const participationPeriod = participationMode === "day" ? participationDate : participationMonth
   useEffect(() => {
-    if (!socket || !participationDate) { setDayRows(null); return }
-    ;(socket as any).timeout(15000).emit("manager:getDayParticipation", { date: participationDate }, (err: any, res: any) => {
+    if (!socket || !participationPeriod) { setDayRows(null); return }
+    const args = participationMode === "day" ? { date: participationPeriod } : { month: participationPeriod }
+    ;(socket as any).timeout(20000).emit("manager:getDayParticipation", args, (err: any, res: any) => {
       setDayRows(!err && res?.ok ? res.rows : [])
+      if (!err && res?.ok) {
+        setParticipationMeta({ sessions: res.sessions ?? 0, roster: res.roster ?? [], months: res.months ?? [] })
+      }
     })
-  }, [socket, participationDate])
+  }, [socket, participationPeriod, participationMode])
 
   const dayParticipation = useMemo(() => {
-    if (!participationDate || !dayRows) return []
+    if (!participationPeriod || !dayRows) return []
     const regionOf = new Map(data.map(q => [q.id, q.region]))
     const players: Record<string, { name: string; count: number; pts: number; c: number; t: number; quizzes: string[] }> = {}
     dayRows.forEach((r: any) => {
@@ -822,12 +835,25 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
         val.quizzes.forEach(q => { if (!merged[ek].quizzes.includes(q)) merged[ek].quizzes.push(q) })
       } else { nameMap[norm] = key; merged[key] = { ...val, quizzes: [...val.quizzes] } }
     })
+    // People who played nothing in the period. Only meaningful with no region
+    // filter: someone who did not play has no quiz, therefore no region, and
+    // would show up under every region tab as if they belonged to it.
+    if (participationShowAll && participationRegion === "all") {
+      const vistos = new Set(Object.values(merged).map(v => v.name.toLowerCase().trim()))
+      participationMeta.roster.forEach(rn => {
+        const display = applyName(rn, rn)
+        if (vistos.has(display.toLowerCase().trim())) return
+        vistos.add(display.toLowerCase().trim())
+        merged["zero:" + rn] = { name: display, count: 0, pts: 0, c: 0, t: 0, quizzes: [] }
+      })
+    }
     const result = Object.values(merged).map(p => ({ ...p, avgPts: p.count > 0 ? Math.round(p.pts / p.count) : 0, acc: p.t > 0 ? Math.round(p.c / p.t * 100) : 0 }))
     if (participationSort === "count") result.sort((a, b) => b.count - a.count)
     else if (participationSort === "pts") result.sort((a, b) => b.pts - a.pts)
     else result.sort((a, b) => a.name.localeCompare(b.name))
     return result
-  }, [data, dayRows, participationDate, participationSort, participationRegion, nameCorrections, applyName])
+  }, [data, dayRows, participationPeriod, participationSort, participationRegion, nameCorrections, applyName,
+      participationShowAll, participationMeta])
 
   // ── RENDER ─────────────────────────────────────────────────────────────────
 
@@ -1638,12 +1664,43 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
               <div className="px-6 pt-4 pb-3 border-b border-gray-100">
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <div>
-                    <h3 className="text-base font-semibold text-gray-800">Participation by day</h3>
-                    <p className="text-sm text-gray-400 mt-1">Who participated on a specific date and how many times</p>
+                    <h3 className="text-base font-semibold text-gray-800">Participation by {participationMode}</h3>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {participationMode === "day"
+                        ? "Who took part on a specific date, and how many times"
+                        : "Who took part over the whole month, and how many sessions each played"}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <input type="date" value={participationDate} onChange={e => setParticipationDate(e.target.value)}
-                      className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 outline-none focus:border-primary bg-white"/>
+                    <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                      {(["day","month"] as const).map((m, mi) => (
+                        <button key={m} onClick={() => setParticipationMode(m)}
+                          className={clsx("px-3 py-1.5 text-xs font-semibold transition-colors", mi > 0 ? "border-l border-gray-200" : "",
+                            participationMode === m ? "bg-primary text-white" : "bg-white text-gray-500 hover:bg-gray-50")}>
+                          {m === "day" ? "Day" : "Month"}
+                        </button>
+                      ))}
+                    </div>
+
+                    {participationMode === "day" ? (
+                      <input type="date" value={participationDate} onChange={e => setParticipationDate(e.target.value)}
+                        className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 outline-none focus:border-primary bg-white"/>
+                    ) : (
+                      <input type="month" value={participationMonth} onChange={e => setParticipationMonth(e.target.value)}
+                        className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 outline-none focus:border-primary bg-white"/>
+                    )}
+
+                    <button onClick={() => setParticipationShowAll(v => !v)}
+                      disabled={participationRegion !== "all"}
+                      title={participationRegion !== "all"
+                        ? "Only without a region filter: someone who did not play has no quiz, so no region either"
+                        : "Include everyone who has ever signed in, even with zero sessions"}
+                      className={clsx("px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors",
+                        participationRegion !== "all" ? "border-gray-200 bg-white text-gray-300 cursor-not-allowed"
+                        : participationShowAll ? "border-primary bg-primary text-white"
+                        : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50")}>
+                      Show all users
+                    </button>
 
                     <div className="flex rounded-lg overflow-hidden border border-gray-200">
                       {(["count","pts","name"] as const).map((s, si) => (
@@ -1657,22 +1714,37 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
                   </div>
                 </div>
               </div>
-              {!participationDate ? (
+              {!participationPeriod ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                   <svg width="40" height="40" fill="none" stroke="#d1d5db" strokeWidth="1.5" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                  <span className="text-sm font-medium text-gray-500">Pick a date to view participation</span>
-                  <span className="text-sm text-gray-400">See each player's session count and performance for that day</span>
+                  <span className="text-sm font-medium text-gray-500">Pick a {participationMode} to view participation</span>
+                  <span className="text-sm text-gray-400">See each player's session count and performance for that {participationMode}</span>
+                  {participationMode === "month" && participationMeta.months.length > 0 && (
+                    <div className="flex gap-1.5 flex-wrap justify-center mt-1">
+                      {participationMeta.months.slice(0, 6).map(m => (
+                        <button key={m} onClick={() => setParticipationMonth(m)}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-50">{m}</button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : dayParticipation.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-2">
-                  <span className="text-sm font-medium text-gray-500">No sessions on this date</span>
-                  <span className="text-sm text-gray-400">Try another date or change the region filter</span>
+                  <span className="text-sm font-medium text-gray-500">No sessions in this {participationMode}</span>
+                  <span className="text-sm text-gray-400">Try another {participationMode} or change the region filter</span>
                 </div>
               ) : (
                 <div className="p-6">
                   <div className="mb-4 flex items-center gap-3">
                     <span className="text-sm font-semibold text-primary bg-primary/8 rounded-full px-3 py-1">{dayParticipation.length} player{dayParticipation.length !== 1 ? "s" : ""}</span>
-                    <span className="text-sm text-gray-400">· {dayParticipation.reduce((a, p) => a + p.count, 0)} total session entries</span>
+                    <span className="text-sm text-gray-400">· {participationMeta.sessions} session{participationMeta.sessions !== 1 ? "s" : ""} held</span>
+                    <span className="text-sm text-gray-400">· {dayParticipation.reduce((a, p) => a + p.count, 0)} entries</span>
+                    {participationShowAll && (() => {
+                      const zero = dayParticipation.filter(p => p.count === 0).length
+                      return <span className={clsx("text-sm font-semibold rounded-full px-3 py-1", zero ? "text-red-600 bg-red-50" : "text-green-700 bg-green-50")}>
+                        {zero} did not take part
+                      </span>
+                    })()}
                     {participationRegion !== "all" && <Tag region={participationRegion}/>}
                   </div>
                   <div className="flex items-center gap-3 border-b border-gray-100 pb-3 mb-1 px-2">
