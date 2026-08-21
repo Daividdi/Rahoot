@@ -219,6 +219,9 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
   const [region, setRegion] = useState(REGIONS[0])
   const [category, setCategory] = useState(CATEGORIES[0])
   const [group, setGroup] = useState(GROUPS[0])
+  // Mirrors DEFAULT_MAX_ATTEMPTS in the socket package; a quiz that does not
+  // say otherwise gets this many solo attempts per person.
+  const [soloAttempts, setSoloAttempts] = useState<number>(3)
   const [questions, setQuestions] = useState<any[]>([blankQuestion()])
   const [draftKey, setDraftKey] = useState("new")
   const [countdown, setCountdown] = useState(60)
@@ -233,8 +236,8 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
 
   // Keep a ref to latest draft data so the interval can read it without stale closure
   useEffect(() => {
-    latestDraft.current = { subject, createdBy, region, category, group, questions }
-  }, [subject, createdBy, region, category, group, questions])
+    latestDraft.current = { subject, createdBy, region, category, group, soloAttempts, questions }
+  }, [subject, createdBy, region, category, group, soloAttempts, questions])
 
   // Reset countdown whenever content changes
   useEffect(() => {
@@ -335,7 +338,7 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
   }
 
   // ─ editor open helpers ─
-  const openEditor = (opts: { editId: string | null; subject: string; createdBy: string; region: string; category: string; group: string; questions: any[] }) => {
+  const openEditor = (opts: { editId: string | null; subject: string; createdBy: string; region: string; category: string; group: string; soloAttempts: number; questions: any[] }) => {
     const key = opts.editId || "new"
     const draft = loadDraft(key)
     if (draft && draft.savedAt) {
@@ -348,6 +351,7 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
         setRegion(draft.region || opts.region)
         setCategory(draft.category || opts.category)
         setGroup(draft.group || opts.group)
+        setSoloAttempts(Number(draft.soloAttempts) > 0 ? Number(draft.soloAttempts) : opts.soloAttempts)
         setQuestions(draft.questions?.length ? draft.questions : opts.questions)
         setEditId(opts.editId); setDraftKey(key); setIsCreating(true)
         return
@@ -355,10 +359,11 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
     }
     setEditId(opts.editId); setSubject(opts.subject); setCreatedBy(opts.createdBy)
     setRegion(opts.region); setCategory(opts.category); setGroup(opts.group)
+    setSoloAttempts(opts.soloAttempts)
     setQuestions(opts.questions); setDraftKey(key); setIsCreating(true)
   }
 
-  const openNewQuizz = () => openEditor({ editId: null, subject: "", createdBy: "", region: REGIONS[0], category: CATEGORIES[0], group: GROUPS[0], questions: [blankQuestion()] })
+  const openNewQuizz = () => openEditor({ editId: null, subject: "", createdBy: "", region: REGIONS[0], category: CATEGORIES[0], group: GROUPS[0], soloAttempts: 3, questions: [blankQuestion()] })
 
   const handleEdit = (quizz: any, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -367,7 +372,7 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
       const ai = [...(q.answerImages || [null, null, null, null])]; while (ai.length < 4) ai.push(null)
       return { ...q, answers: a, answerImages: ai }
     })
-    openEditor({ editId: quizz.id, subject: quizz.subject, createdBy: quizz.createdBy || "", region: quizz.region || REGIONS[0], category: quizz.category || CATEGORIES[0], group: quizz.group || GROUPS[0], questions: qs })
+    openEditor({ editId: quizz.id, subject: quizz.subject, createdBy: quizz.createdBy || "", region: quizz.region || REGIONS[0], category: quizz.category || CATEGORIES[0], group: quizz.group || GROUPS[0], soloAttempts: Number(quizz.solo?.maxAttempts) > 0 ? Number(quizz.solo.maxAttempts) : 3, questions: qs })
   }
 
   const handleCopy = (quizz: any, e: React.MouseEvent) => {
@@ -377,7 +382,7 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
       const ai = [...(q.answerImages || [null, null, null, null])]; while (ai.length < 4) ai.push(null)
       return { ...q, answers: a, answerImages: ai }
     })
-    openEditor({ editId: null, subject: quizz.subject + " (Copy)", createdBy: quizz.createdBy || "", region: quizz.region || REGIONS[0], category: quizz.category || CATEGORIES[0], group: quizz.group || GROUPS[0], questions: qs })
+    openEditor({ editId: null, subject: quizz.subject + " (Copy)", createdBy: quizz.createdBy || "", region: quizz.region || REGIONS[0], category: quizz.category || CATEGORIES[0], group: quizz.group || GROUPS[0], soloAttempts: Number(quizz.solo?.maxAttempts) > 0 ? Number(quizz.solo.maxAttempts) : 3, questions: qs })
   }
 
   const handleSelect = (id: string) => () => setSelected(selected === id ? null : id)
@@ -413,7 +418,7 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
       return { ...q, answers: kept.map((p: { text: string; img: string | null }) => p.text), answerImages: kept.map((p: { text: string; img: string | null }) => p.img) }
     })
     const finalId = editId || (subject.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now() + ".json")
-    const newQuiz: any = { ...(existing || {}), id: finalId, subject, createdBy, createdAt, lastPlayedAt: existing?.lastPlayedAt || null, region, category, group, questions: filteredQs }
+    const newQuiz: any = { ...(existing || {}), id: finalId, subject, createdBy, createdAt, lastPlayedAt: existing?.lastPlayedAt || null, region, category, group, questions: filteredQs, solo: { ...(existing?.solo || {}), maxAttempts: soloAttempts } }
     anySocket?.emit("manager:createQuiz", newQuiz)
     setLocalList((prev) => { const clean = prev.filter((q) => q.id !== finalId && q.id !== editId); const next = [...clean, newQuiz]; onListChange?.(next); return next })
     setSelected(finalId)
@@ -479,7 +484,7 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
     openEditor({
       editId: null,
       subject: importSubjectOverride || importPreview.subject,
-      createdBy: "", region: REGIONS[0], category: CATEGORIES[0], group: GROUPS[0],
+      createdBy: "", region: REGIONS[0], category: CATEGORIES[0], group: GROUPS[0], soloAttempts: 3,
       questions: importPreview.questions.map((q: any) => {
         const a = [...(q.answers || [])]; while (a.length < 4) a.push("")
         return { ...q, answers: a, answerImages: [null, null, null, null] }
@@ -607,6 +612,10 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
             <div className="flex-1 min-w-[80px]">
               <label className="mb-0.5 block text-[10px] font-bold uppercase tracking-widest text-gray-400">Group</label>
               <select className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary cursor-pointer" value={group} onChange={(e) => setGroup(e.target.value)}>{GROUPS.map((g) => <option key={g}>{g}</option>)}</select>
+            </div>
+            <div className="flex-1 min-w-[92px]">
+              <label className="mb-0.5 block text-[10px] font-bold uppercase tracking-widest text-gray-400" title="How many times each person may take this quiz in solo mode. Live sessions are not affected.">Solo tries</label>
+              <input type="number" min={1} max={99} className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary focus:bg-white" value={soloAttempts} onChange={(e) => setSoloAttempts(Math.min(99, Math.max(1, Number(e.target.value) || 1)))} />
             </div>
           </div>
         </div>

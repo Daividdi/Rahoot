@@ -11,7 +11,11 @@ type Entry = {
   region: string;
   group: string;
   questions: number;
+  /** Effective solo attempts per person; mirrors DEFAULT_MAX_ATTEMPTS when unset. */
+  maxAttempts: number;
 };
+
+const DEFAULT_MAX_ATTEMPTS = 3;
 
 // Parsing every quiz on each request means ~23 MB of JSON, which blows the
 // caller's timeout. Hold the catalogue in memory and rebuild it only when the
@@ -60,6 +64,10 @@ export async function GET() {
           region: typeof raw.region === 'string' ? raw.region : '',
           group: typeof raw.group === 'string' ? raw.group : '',
           questions: Array.isArray(raw.questions) ? raw.questions.length : 0,
+          maxAttempts:
+            Number(raw?.solo?.maxAttempts) > 0
+              ? Number(raw.solo.maxAttempts)
+              : DEFAULT_MAX_ATTEMPTS,
         });
       } catch {
         // One malformed quiz must not take the whole catalogue down.
