@@ -40,7 +40,7 @@ type SoloQuiz = {
 
 type SoloQuizResp =
   | { ok: true; quiz: SoloQuiz; attemptsUsed: number; maxAttempts: number }
-  | { ok: false; reason: "not_found" | "no_attempts_left" | "solo_disabled" | "server_error" }
+  | { ok: false; reason: "not_found" | "no_attempts_left" | "solo_disabled" | "server_error"; attemptsUsed?: number; maxAttempts?: number }
 
 type SoloResultResp =
   | {
@@ -404,7 +404,46 @@ export default function SoloGamePage() {
   }
 
   if (stage === "error") {
-    return <Shell><div className="py-8 text-center text-sm text-red-500">{error}</div></Shell>
+    // A single line of red text on an empty card reads as "the page did not
+    // load". Say what happened, and for the common case say how to fix it.
+    const failed = resp && !resp.ok ? resp : null
+    const used = failed?.attemptsUsed
+    const max = failed?.maxAttempts
+    const reason = failed?.reason
+
+    const title =
+      reason === "no_attempts_left" ? "No attempts left"
+        : reason === "not_found" ? "Quiz not found"
+          : reason === "solo_disabled" ? "Solo mode is off for this quiz"
+            : "Could not load this quiz"
+
+    const detail =
+      reason === "no_attempts_left"
+        ? "Attempts are counted per person, per quiz. The link itself is still valid and does not expire \u2014 ask an administrator to raise the limit for this quiz if you need another go."
+        : reason === "not_found"
+          ? "This quiz is no longer on the server. The link may be from an older quiz that has since been removed."
+          : reason === "solo_disabled"
+            ? "This quiz was set up for live sessions only."
+            : error
+
+    return (
+      <Shell>
+        <div className="flex flex-col gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Solo Mode</p>
+            <h2 className="text-lg font-bold text-gray-800">{title}</h2>
+          </div>
+          {reason === "no_attempts_left" && typeof used === "number" && typeof max === "number" && (
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="Attempts used" value={`${used}/${max}`} />
+              <Stat label="Remaining" value="0" />
+            </div>
+          )}
+          <p className="text-[11px] text-gray-500">{detail}</p>
+          <Button onClick={() => { window.location.href = "/" }}>Back to home</Button>
+        </div>
+      </Shell>
+    )
   }
 
   if (stage === "ready" && resp?.ok) {

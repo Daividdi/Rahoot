@@ -42,7 +42,15 @@ export interface SoloQuizPayload {
   maxAttempts: number
 }
 
-export type SoloQuizResponse = SoloQuizPayload | { ok: false; reason: "not_found" | "no_attempts_left" | "solo_disabled" }
+export type SoloQuizResponse =
+  | SoloQuizPayload
+  | {
+      ok: false
+      reason: "not_found" | "no_attempts_left" | "solo_disabled"
+      /** Present on no_attempts_left so the screen can say how many were used. */
+      attemptsUsed?: number
+      maxAttempts?: number
+    }
 
 function findPlayerIdByName(realName: string): string | null {
   const key = normName(realName)
@@ -96,7 +104,7 @@ export function getSoloQuizFor(quizId: string, realName: string): SoloQuizRespon
   }
 
   if (attemptsUsed >= maxAttempts) {
-    return { ok: false, reason: "no_attempts_left" }
+    return { ok: false, reason: "no_attempts_left", attemptsUsed, maxAttempts }
   }
 
   return {
