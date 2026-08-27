@@ -197,6 +197,25 @@ export function submitSoloAttempt(input: SoloSubmitInput): SoloSubmitResponse {
     longestStreakInGame: lg,
   })
 
+  // O que foi respondido ja era guardado em `session_players.answers_json`; o
+  // que faltava era o GABARITO. Sem ele a revisao teria de procurar a pergunta
+  // no quiz atual pelo texto — e um quiz editado depois faria a revisao de uma
+  // tentativa antiga mentir, ou simplesmente nao achar. Guardar a resposta
+  // certa junto congela a tentativa como ela foi.
+  const perguntas: any[] = Array.isArray(quiz.questions) ? quiz.questions : []
+  const respostasDetalhadas = (input.answers || []).map((a, i) => {
+    const q = perguntas[i]
+    const opcoes: string[] = Array.isArray(q?.answers) ? q.answers : []
+    const idxCerta = typeof q?.solution === "number" ? q.solution : -1
+    return {
+      ...a,
+      questionIndex: i,
+      options: opcoes,
+      correctIndex: idxCerta,
+      correctAnswer: idxCerta >= 0 ? (opcoes[idxCerta] ?? "") : "",
+    }
+  })
+
   const now = new Date().toISOString()
   const sessionId = randomUUID()
   const weekIso = getISOWeekInternal(new Date(now))
@@ -235,10 +254,29 @@ export function submitSoloAttempt(input: SoloSubmitInput): SoloSubmitResponse {
   let newTier = "bronze"
   let newBadges: BadgeUnlock[] = []
 
+  // O console lia `lastPlayedAt`/`totalGamesPlayed` do JSON do quiz, e so o
+  // modo classico os escrevia — por isso um quiz jogado dezenas de vezes em
+  // solo aparecia como "Never played, 0 sessions". Solo passa a marcar os
+  // proprios campos, separados: misturar com os do classico distorceria as
+  // estatisticas de sessao, que sao de jogo com turma.
+  try {
+    const fsq = require("fs")
+    const arq = Config.quizzFilePath(input.quizId)
+    if (fsq.existsSync(arq)) {
+      const j = JSON.parse(fsq.readFileSync(arq, "utf-8"))
+      j.lastSoloAt = new Date().toISOString()
+      j.totalSoloAttempts = (j.totalSoloAttempts || 0) + 1
+      fsq.writeFileSync(arq, JSON.stringify(j, null, 2))
+    }
+  } catch (e) {
+    // Marcar o quiz e conveniencia de relatorio; se falhar, a tentativa em si
+    // (que esta no banco, logo abaixo) nao pode ser perdida por causa disso.
+  }
+
   db().exec("BEGIN")
   try {
     insSession.run(sessionId, input.quizId, quizTitle, input.startedAt || now, now, weekIso, monthIso)
-    insSP.run(sessionId, playerId, points, correct, incorrect, unanswered, xpGained, JSON.stringify(answers))
+    insSP.run(sessionId, playerId, points, correct, incorrect, unanswered, xpGained, JSON.stringify(respostasDetalhadas))
     insSolo.run(
       playerId, input.quizId, attemptsUsed + 1,
       points, correct, incorrect, unanswered, xpGained,
@@ -284,4 +322,129 @@ function getISOWeekInternal(date: Date): string {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
   return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`
+}
+
+/* ────────────────────────────── REVISAO ────────────────────────────── */
+
+export type PoliticaRevisao = "never" | "after_attempts" | "always"
+
+/**
+ * Politica de revisao de um quiz.
+ *
+ * O padrao e `after_attempts` de proposito. Mostrar o gabarito durante as
+ * tentativas transforma a revisao em folha de respostas — a pessoa erra,
+ * confere e refaz acertando, e o numero deixa de dizer o que ela sabe.
+ * Esgotadas as tentativas isso nao existe mais, e ai a revisao so ensina.
+ * Quem quiser outro comportamento escolhe no editor do quiz.
+ */
+export function politicaRevisao(quiz: any): PoliticaRevisao {
+  const v = String(quiz?.solo?.review || "").trim()
+  return v === "never" || v === "always" ? v : "after_attempts"
+}
+
+export interface ItemRevisao {
+  questionIndex: number
+  questionTitle: string
+  selectedAnswer: string
+  isCorrect: boolean
+  options?: string[]
+  correctAnswer?: string
+}
+
+export type RevisaoResponse =
+  | {
+      ok: true
+      quizId: string
+      quizTitle: string
+      startedAt: string
+      points: number
+      correct: number
+      incorrect: number
+      unanswered: number
+      /** Se o gabarito veio junto. A tela precisa saber para explicar por que nao. */
+      showsKey: boolean
+      policy: PoliticaRevisao
+      attemptsUsed: number
+      maxAttempts: number
+      items: ItemRevisao[]
+    }
+  | { ok: false; reason: "not_found" | "not_yours" | "no_detail" }
+
+/**
+ * Revisao de UMA tentativa solo, para o proprio jogador.
+ *
+ * Chaveada por sessao e conferida contra o dono: o cliente manda um id, e sem a
+ * conferencia qualquer pessoa leria a tentativa de qualquer outra trocando o
+ * numero. O gabarito so viaja quando a politica do quiz permite — filtrar na
+ * TELA nao serviria, porque o dado ja teria saido do servidor.
+ */
+export function getSoloReview(sessionId: string, realName: string): RevisaoResponse {
+  if (!sessionId || !realName?.trim()) return { ok: false, reason: "not_found" }
+
+  const playerId = findPlayerIdByName(realName.trim())
+  if (!playerId) return { ok: false, reason: "not_yours" }
+
+  const row = db()
+    .prepare(
+      `SELECT s.quiz_id AS quizId, s.quiz_title AS quizTitle, s.started_at AS startedAt,
+              sp.player_id AS playerId, sp.points AS points, sp.correct AS correct,
+              sp.incorrect AS incorrect, sp.unanswered AS unanswered,
+              sp.answers_json AS answersJson
+         FROM sessions s
+         JOIN session_players sp ON sp.session_id = s.id
+        WHERE s.id = ? AND s.mode = 'solo'`
+    )
+    .get(sessionId) as any
+
+  if (!row) return { ok: false, reason: "not_found" }
+  if (row.playerId !== playerId) return { ok: false, reason: "not_yours" }
+
+  let bruto: any[] = []
+  try { bruto = JSON.parse(row.answersJson || "[]") } catch { bruto = [] }
+  if (!Array.isArray(bruto) || !bruto.length) return { ok: false, reason: "no_detail" }
+
+  const quiz = loadQuiz(row.quizId)
+  const politica = politicaRevisao(quiz)
+  const maxAttempts = Number(quiz?.solo?.maxAttempts) > 0 ? Number(quiz.solo.maxAttempts) : DEFAULT_MAX_ATTEMPTS
+  const attemptsUsed = countAttempts(playerId, row.quizId)
+
+  const mostraGabarito =
+    politica === "always" || (politica === "after_attempts" && attemptsUsed >= maxAttempts)
+
+  const items: ItemRevisao[] = bruto.map((a: any, i: number) => {
+    const base: ItemRevisao = {
+      questionIndex: typeof a.questionIndex === "number" ? a.questionIndex : i,
+      questionTitle: String(a.questionTitle ?? ""),
+      selectedAnswer: String(a.selectedAnswer ?? ""),
+      isCorrect: !!a.isCorrect,
+    }
+    if (!mostraGabarito) return base
+    // Tentativas anteriores a v1.44 nao guardaram o gabarito. Em vez de mentir
+    // ou de sumir com a linha, cai para o quiz atual — que pode ter mudado,
+    // entao so vale quando a pergunta ainda bate exatamente.
+    if (a.correctAnswer || Array.isArray(a.options)) {
+      return { ...base, options: a.options, correctAnswer: a.correctAnswer }
+    }
+    const q = Array.isArray(quiz?.questions) ? quiz.questions[base.questionIndex] : null
+    if (q && String(q.question) === base.questionTitle && Array.isArray(q.answers)) {
+      return { ...base, options: q.answers, correctAnswer: q.answers[q.solution] ?? "" }
+    }
+    return base
+  })
+
+  return {
+    ok: true,
+    quizId: row.quizId,
+    quizTitle: row.quizTitle,
+    startedAt: row.startedAt,
+    points: row.points,
+    correct: row.correct,
+    incorrect: row.incorrect,
+    unanswered: row.unanswered,
+    showsKey: mostraGabarito,
+    policy: politica,
+    attemptsUsed,
+    maxAttempts,
+    items,
+  }
 }

@@ -11,7 +11,7 @@ import { withGame } from "@rahoot/socket/utils/game"
 import { appendSession, getPlayerHistory, getMonthlyLeaderboard } from "@rahoot/socket/services/history"
 import { recordSession } from "@rahoot/socket/services/sessionRecorder"
 import { getProfile } from "@rahoot/socket/services/profile"
-import { getSoloQuizFor, submitSoloAttempt } from "@rahoot/socket/services/soloMode"
+import { getSoloQuizFor, submitSoloAttempt, getSoloReview } from "@rahoot/socket/services/soloMode"
 import { snapshotClosedWeeks, getAllLeaderboards } from "@rahoot/socket/services/leaderboards"
 import { listAvatars, saveAvatarSelection } from "@rahoot/socket/services/avatars3d"
 import { ldapAuthenticate } from "@rahoot/socket/services/ldap"
@@ -213,6 +213,65 @@ io.on("connection", (socket) => {
   // ── Solo + Combined DB report for manager analytics ──────────────────────
   // Accepts an optional { from, to } ISO date range so the dashboard period
   // filter applies to real session/attempt dates (not quiz last-played).
+  // Revisao de uma tentativa, pedida pelo proprio jogador. O servidor confere
+  // o dono e aplica a politica do quiz antes de responder — ver getSoloReview.
+  socket.on("player:getSoloReview" as any, (args: any, callback?: any) => {
+    try {
+      const r = getSoloReview(String(args?.sessionId || ""), String(args?.realName || ""))
+      if (typeof callback === "function") callback(r)
+      else socket.emit("player:soloReview" as any, r)
+    } catch (e: any) {
+      const err = { ok: false, reason: "not_found" }
+      if (typeof callback === "function") callback(err)
+      else socket.emit("player:soloReview" as any, err)
+    }
+  })
+
+  // Exportacao por PERGUNTA, para o treinador. O relatorio que ja existia
+  // agrega por pessoa e por quiz, o que responde "quem foi bem"; esta responde
+  // "qual pergunta o time erra", que e a que muda o treinamento.
+  socket.on("manager:getSoloAnswers" as any, (args: any, callback?: any) => {
+    try {
+      const quizId = String(args?.quizId || "")
+      const linhas = db()
+        .prepare(
+          `SELECT s.quiz_id AS quizId, s.quiz_title AS quizTitle, s.started_at AS startedAt,
+                  p.real_name AS player, sp.answers_json AS answersJson
+             FROM sessions s
+             JOIN session_players sp ON sp.session_id = s.id
+             JOIN players p ON p.id = sp.player_id
+            WHERE s.mode = 'solo' ${quizId ? "AND s.quiz_id = ?" : ""}
+            ORDER BY s.started_at DESC`
+        )
+        .all(...(quizId ? [quizId] : [])) as any[]
+
+      const saida: any[] = []
+      for (const l of linhas) {
+        let itens: any[] = []
+        try { itens = JSON.parse(l.answersJson || "[]") } catch { itens = [] }
+        itens.forEach((a: any, i: number) => {
+          saida.push({
+            quiz: l.quizTitle,
+            player: l.player,
+            when: l.startedAt,
+            question_no: (typeof a.questionIndex === "number" ? a.questionIndex : i) + 1,
+            question: a.questionTitle ?? "",
+            answered: a.selectedAnswer ?? "",
+            correct_answer: a.correctAnswer ?? "",
+            result: a.isCorrect ? "correct" : "wrong",
+          })
+        })
+      }
+      const r = { ok: true, rows: saida }
+      if (typeof callback === "function") callback(r)
+      else socket.emit("manager:soloAnswers" as any, r)
+    } catch (e: any) {
+      const err = { ok: false, rows: [] }
+      if (typeof callback === "function") callback(err)
+      else socket.emit("manager:soloAnswers" as any, err)
+    }
+  })
+
   socket.on("manager:getSoloReport", (args: any, callback?: any) => {
     if (typeof args === "function") { callback = args; args = {} }
     if (typeof callback !== "function") return

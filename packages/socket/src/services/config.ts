@@ -94,6 +94,19 @@ class Config {
     return {}
   }
 
+  /**
+   * Caminho em disco de um arquivo de quiz.
+   *
+   * Existe para que quem precisa ESCREVER no quiz (marcar que houve jogo, por
+   * exemplo) nao replique a resolucao de `getPath` — que muda entre container
+   * e execucao local. Duas copias dessa regra divergem no dia em que uma delas
+   * for ajustada.
+   */
+  static quizzFilePath(quizId: string) {
+    const nome = quizId.endsWith(".json") ? quizId : `${quizId}.json`
+    return getPath(`quizz/${nome}`)
+  }
+
   static quizz() {
     const isExists = fs.existsSync(getPath("quizz"))
 

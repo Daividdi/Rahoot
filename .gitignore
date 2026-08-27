@@ -5,3 +5,12 @@ dist/
 *.log
 .DS_Store
 .env
+
+# Store renomeado para desativar sai do .pnpm-store/ e voltava a ser
+# rastreado; arquivos de 100+ MB fazem o GitHub recusar o push inteiro.
+.pnpm-store.disabled/
+
+# Copias de seguranca de edicao, minhas e de quem mexer no servidor.
+*.bak
+*.bak-*
+*.bak2-*

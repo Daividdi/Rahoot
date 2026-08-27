@@ -43,11 +43,16 @@ type ProfilePayload = {
   } | null
   recentSessions: Array<{
     sessionId: string
+    quizId: string
     quizTitle: string
+    /** "classic" | "solo" | "team" — so o solo tem revisao por pergunta. */
+    mode: string
     startedAt: string
     rank: number
     points: number
     correct: number
+    incorrect: number
+    unanswered: number
     xpGained: number
   }>
   monthly: { rank: number | null; points: number; games: number } | null
@@ -143,6 +148,11 @@ const PlayerHomeCard = () => {
   const [profile, setProfile] = useState<ProfilePayload | null>(null)
   const [profileLoading, setProfileLoading] = useState(false)
 
+  // Revisao de uma tentativa solo. Fica no cartao mesmo, e nao numa pagina
+  // propria: quem quer conferir o que errou esta olhando o proprio historico
+  // naquele instante, e tirar a pessoa da tela para isso e perder o contexto.
+  const [review, setReview] = useState<any>(null)
+  const [reviewLoading, setReviewLoading] = useState<string | null>(null)
   const [pinMode, setPinMode] = useState(false)
   const [pin, setPin] = useState("")
   const [expanded, setExpanded] = useState(false)  // show recent games
@@ -473,14 +483,87 @@ const PlayerHomeCard = () => {
         {expanded && profile && profile.recentSessions.length > 0 && (
           <div className="flex flex-col gap-1.5 border-t border-gray-100 pt-3">
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Recent games</p>
-            {profile.recentSessions.slice(0, 5).map(s => (
-              <div key={s.sessionId} className="flex items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5">
-                <span className="shrink-0 text-[10px] text-gray-400">#{s.rank}</span>
-                <span className="flex-1 truncate text-xs font-semibold text-gray-700">{s.quizTitle}</span>
-                <span className="shrink-0 text-[10px] font-bold text-primary">+{s.xpGained} XP</span>
-                <span className="shrink-0 text-[10px] text-gray-400">{new Date(s.startedAt).toLocaleDateString("en-US")}</span>
+            {profile.recentSessions.slice(0, 5).map(s => {
+              const isSolo = s.mode === "solo"
+              const linha = (
+                <>
+                  <span className="shrink-0 text-[10px] text-gray-400">{isSolo ? "solo" : `#${s.rank}`}</span>
+                  <span className="flex-1 truncate text-left text-xs font-semibold text-gray-700">{s.quizTitle}</span>
+                  {isSolo && <span className="shrink-0 text-[10px] font-semibold text-primary">Review</span>}
+                  <span className="shrink-0 text-[10px] font-bold text-primary">+{s.xpGained} XP</span>
+                  <span className="shrink-0 text-[10px] text-gray-400">{new Date(s.startedAt).toLocaleDateString("en-US")}</span>
+                </>
+              )
+              if (!isSolo) {
+                return <div key={s.sessionId} className="flex items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5">{linha}</div>
+              }
+              return (
+                <button
+                  key={s.sessionId}
+                  onClick={() => {
+                    if (review?.sessionId === s.sessionId) { setReview(null); return }
+                    setReviewLoading(s.sessionId)
+                    ;(socket as any)?.timeout(12000).emit(
+                      "player:getSoloReview",
+                      { sessionId: s.sessionId, realName: profile.player?.realName },
+                      (err: any, r: any) => {
+                        setReviewLoading(null)
+                        if (err || !r?.ok) { setReview({ sessionId: s.sessionId, erro: true }); return }
+                        setReview({ ...r, sessionId: s.sessionId })
+                      },
+                    )
+                  }}
+                  className="flex items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5 hover:bg-gray-100"
+                >
+                  {reviewLoading === s.sessionId
+                    ? <span className="flex-1 text-left text-xs text-gray-400">Loading…</span>
+                    : linha}
+                </button>
+              )
+            })}
+
+            {review && (
+              <div className="mt-1 rounded-xl bg-white p-3 ring-1 ring-gray-100">
+                {review.erro ? (
+                  <p className="text-center text-xs text-gray-400">Could not load this attempt.</p>
+                ) : (
+                  <>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="truncate text-xs font-bold text-gray-700">{review.quizTitle}</p>
+                      <span className="shrink-0 text-[10px] text-gray-400">
+                        {review.correct}/{review.items.length} correct · try {review.attemptsUsed} of {review.maxAttempts}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {review.items.map((it: any) => (
+                        <div key={it.questionIndex} className="rounded-lg bg-gray-50 px-2.5 py-1.5">
+                          <div className="flex items-start gap-2">
+                            <span className={`shrink-0 text-[11px] font-bold ${it.isCorrect ? "text-green-600" : "text-answer-red"}`}>
+                              {it.isCorrect ? "✓" : "✗"}
+                            </span>
+                            <span className="flex-1 text-[11px] font-semibold text-gray-700">{it.questionTitle}</span>
+                          </div>
+                          <div className="mt-0.5 pl-5 text-[10px] text-gray-500">
+                            You answered: <span className="font-semibold text-gray-700">{it.selectedAnswer}</span>
+                            {!it.isCorrect && it.correctAnswer && (
+                              <> · Correct: <span className="font-semibold text-green-700">{it.correctAnswer}</span></>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Sem o gabarito, a tela diz POR QUE — senao parece defeito. */}
+                    {!review.showsKey && (
+                      <p className="mt-2 text-center text-[10px] text-gray-400">
+                        {review.policy === "never"
+                          ? "Correct answers are not shown for this quiz."
+                          : `Correct answers appear after your last try (${review.attemptsUsed} of ${review.maxAttempts} used).`}
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
-            ))}
+            )}
           </div>
         )}
         {expanded && profile && profile.recentSessions.length === 0 && (

@@ -1922,6 +1922,22 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
                           className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-primary hover:border-primary/40 transition-colors">
                           Export CSV
                         </button>
+                        {/* O export acima agrega por pessoa e responde "quem foi
+                            bem". Este desce ate a PERGUNTA e responde "o que o
+                            time erra", que e a leitura que muda o treinamento. */}
+                        <button
+                          onClick={() => {
+                            ;(socket as any)?.timeout(20000).emit("manager:getSoloAnswers", {}, (err: any, r: any) => {
+                              if (err || !r?.ok || !r.rows?.length) {
+                                alert("No per-question data yet.")
+                                return
+                              }
+                              downloadCsv("solo-answers.csv", r.rows)
+                            })
+                          }}
+                          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-primary hover:border-primary/40 transition-colors">
+                          Export answers
+                        </button>
                       </div>
                     </div>
                     {ps.length === 0 ? (
