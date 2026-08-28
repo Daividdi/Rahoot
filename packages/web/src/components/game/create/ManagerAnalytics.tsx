@@ -1888,8 +1888,16 @@ export default function ManagerAnalytics({ quizzList, initialRegion = "all", onS
                           const color = acc >= 65 ? "#22c55e" : acc >= 50 ? "#009edf" : acc >= 35 ? "#f59e0b" : "#ef4444"
                           const ago = q.last_played ? (() => { try { const d = new Date(q.last_played); const diff = Date.now() - d.getTime(); const days = Math.floor(diff/86400000); return days === 0 ? "Today" : days === 1 ? "Yesterday" : `${days}d ago` } catch { return "" } })() : ""
                           return (
-                            <div key={q.quiz_id} className="grid gap-3 items-center rounded-xl px-3 py-3 hover:bg-gray-50 transition-colors" style={{ gridTemplateColumns: "1fr 80px 80px 120px 100px" }}>
-                              <span className="text-sm font-medium text-gray-700 truncate" title={q.quiz_title}>{q.quiz_title}</span>
+                            // A linha leva ao relatorio do quiz ja aberto na
+                            // pratica solo. Esta tela responde "quanto se
+                            // praticou"; o relatorio responde "o que erraram",
+                            // pergunta por pergunta — e nao havia caminho de
+                            // uma para a outra.
+                            <div key={q.quiz_id}
+                                 onClick={() => router.push(`/reports/${(q.quiz_id || "").replace(".json", "")}?session=solo:all`)}
+                                 title="Abrir o relatório desta prática solo"
+                                 className="grid gap-3 items-center rounded-xl px-3 py-3 hover:bg-gray-50 transition-colors cursor-pointer" style={{ gridTemplateColumns: "1fr 80px 80px 120px 100px" }}>
+                              <span className="text-sm font-medium text-primary truncate" title={q.quiz_title}>{q.quiz_title}</span>
                               <span className="text-sm font-bold text-gray-700 text-center tabular-nums">{q.unique_players}</span>
                               <span className="text-sm font-bold text-gray-700 text-center tabular-nums">{q.total_attempts}</span>
                               <div className="flex items-center gap-2">
