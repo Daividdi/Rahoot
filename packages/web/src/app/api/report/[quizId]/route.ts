@@ -117,12 +117,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ quiz
             const nome = nameCorrections[l.clientId || l.realName || ''] || l.realName;
             return {
               clientId: l.clientId,
-              // A tela mostra `username` embaixo do nome, em letra menor. Repetir
-              // o nome ali nao acrescenta nada; dizer QUAL tentativa e, sim.
-              // So aparece para quem tentou mais de uma vez.
-              username: Number(l.total) > 1 ? `try ${l.tentativa} of ${l.total}` : l.username,
-              // No nome fica o sufixo tambem, porque e ele que vai para o CSV e
-              // para o PDF, onde a coluna de baixo nao existe.
+              // Os DOIS campos recebem a mesma string, e isso e proposital.
+              //
+              // A tela imprime `username` em destaque e so mostra `realName`
+              // embaixo QUANDO os dois diferem. Iguais, sai uma linha limpa com
+              // nome e tentativa; diferentes, o nome aparecia duas vezes. E o
+              // `username` e o que vai para o Excel e o PDF, entao o numero da
+              // tentativa precisa estar nele de qualquer forma.
+              //
+              // O sufixo so existe para quem tentou mais de uma vez.
+              username: Number(l.total) > 1 ? `${nome} (${l.tentativa}/${l.total})` : nome,
               realName: Number(l.total) > 1 ? `${nome} (${l.tentativa}/${l.total})` : nome,
               avatarUrl: l.avatar3dId ? `/api/avatar3d/r3/icons/${l.avatar3dId}` : null,
               points: l.points,
