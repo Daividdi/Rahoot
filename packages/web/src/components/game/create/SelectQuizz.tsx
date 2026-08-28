@@ -6,7 +6,7 @@ import clsx from "clsx"
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import toast from "react-hot-toast"
 import { useSocket } from "@rahoot/web/contexts/socketProvider"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 
 // Textarea que quebra linha e cresce com o conteúdo (auto-size), substituindo
 // o input de uma linha que truncava textos longos no editor.
@@ -208,6 +208,27 @@ const SelectQuizz = ({ quizzList, onSelect, onListChange, regionFilter = "all" }
   useEffect(() => { setLocalList(quizzList) }, [quizzList])
 
   const [selected, setSelected] = useState<string | null>(null)
+
+  // "Play again" no relatorio chega com ?quiz=<id> e ja deixa o quiz escolhido.
+  // Antes aquele botao chamava router.back(), que voltava no historico do
+  // navegador — quase sempre esta mesma lista, sem nada selecionado, e o
+  // treinador tinha de procurar o quiz de novo.
+  //
+  // Deixa SELECIONADO, nao inicia: abrir sala ao vivo por link seria fácil
+  // demais de disparar sem querer, e quem confirma o inicio continua sendo a
+  // pessoa. Roda uma vez, quando a lista chega — depois disso a escolha e de
+  // quem esta usando a tela.
+  const params = useSearchParams()
+  const jaPreSelecionou = useRef(false)
+  useEffect(() => {
+    if (jaPreSelecionou.current || !quizzList?.length) return
+    const pedido = params?.get("quiz")
+    if (!pedido) { jaPreSelecionou.current = true; return }
+    const alvo = pedido.endsWith(".json") ? pedido : `${pedido}.json`
+    const achou = quizzList.find((q: any) => q.id === alvo || q.id === pedido)
+    if (achou) setSelected(achou.id)
+    jaPreSelecionou.current = true
+  }, [quizzList, params])
   const [isCreating, setIsCreating] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const { socket } = useSocket()
