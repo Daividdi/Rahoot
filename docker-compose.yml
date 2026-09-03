@@ -9,6 +9,7 @@ services:
       - ../config:/app/config
     environment:
       - TZ=${TZ:-America/Sao_Paulo}
+      - HOSTNAME=0.0.0.0
       - WEB_ORIGIN=${WEB_ORIGIN}
       - SOCKET_URL=${SOCKET_URL}
     env_file:
