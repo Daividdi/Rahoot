@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.1 - 2026-09-03
+## v1.48 - 2026-09-03
 
 - Solo mode now waits for the player to press `Next` or `Finish` after submitting an answer.
 - Solo multiple-answer questions support selecting and confirming the complete answer set.
