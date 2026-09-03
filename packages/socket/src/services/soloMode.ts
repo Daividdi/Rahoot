@@ -32,10 +32,11 @@ export interface SoloQuizPayload {
     questions: Array<{
       question: string
       answers: string[]
-      solution: number      // kept client-side for local grading (honor-system)
+      solution: number | number[] // kept client-side for local grading (honor-system)
       time: number
       cooldown: number
       image?: string
+      answerImages?: string[] | null
     }>
   }
   attemptsUsed: number
@@ -206,13 +207,25 @@ export function submitSoloAttempt(input: SoloSubmitInput): SoloSubmitResponse {
   const respostasDetalhadas = (input.answers || []).map((a, i) => {
     const q = perguntas[i]
     const opcoes: string[] = Array.isArray(q?.answers) ? q.answers : []
-    const idxCerta = typeof q?.solution === "number" ? q.solution : -1
+    let idxCerta: number | number[] = -1
+    if (Array.isArray(q?.solution)) {
+      idxCerta = q.solution
+    } else if (typeof q?.solution === "number") {
+      idxCerta = q.solution
+    }
+    const indicesCertos = Array.isArray(idxCerta)
+      ? idxCerta
+      : idxCerta >= 0
+        ? [idxCerta]
+        : []
     return {
       ...a,
       questionIndex: i,
       options: opcoes,
       correctIndex: idxCerta,
-      correctAnswer: idxCerta >= 0 ? (opcoes[idxCerta] ?? "") : "",
+        correctAnswer: indicesCertos
+          .map((index) => opcoes[index] ?? String(index))
+          .join(", "),
     }
   })
 
@@ -427,7 +440,14 @@ export function getSoloReview(sessionId: string, realName: string): RevisaoRespo
     }
     const q = Array.isArray(quiz?.questions) ? quiz.questions[base.questionIndex] : null
     if (q && String(q.question) === base.questionTitle && Array.isArray(q.answers)) {
-      return { ...base, options: q.answers, correctAnswer: q.answers[q.solution] ?? "" }
+      const correctIndexes = Array.isArray(q.solution) ? q.solution : [q.solution]
+      return {
+        ...base,
+        options: q.answers,
+        correctAnswer: correctIndexes
+          .map((index: number) => q.answers[index] ?? String(index))
+          .join(", "),
+      }
     }
     return base
   })
